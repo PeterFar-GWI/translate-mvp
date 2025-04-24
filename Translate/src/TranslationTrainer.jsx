@@ -1,14 +1,26 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Papa from "papaparse";
 
 export default function TranslationTrainer() {
   const [rows, setRows] = useState([]);
   const [fileName, setFileName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [training, setTraining] = useState(false);
+  const [trainingStatus, setTrainingStatus] = useState(null);
+  const [models, setModels] = useState([]);
+  const [selectedModel, setSelectedModel] = useState("");
 
-  // 🔐 Load from environment variables (as strings from .env.local)
-  const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
-  const model = import.meta.env.VITE_FINE_TUNING_MODEL;
+  useEffect(() => {
+    fetch("/api/models")
+      .then(res => res.json())
+      .then(data => {
+        setModels(data.models || []);
+        if (data.models && data.models.length > 0) {
+          setSelectedModel(data.models[0].id); // default to most recent
+        }
+      })
+      .catch(err => console.error("Failed to load models:", err));
+  }, []);
 
   const handleFileUpload = async (e) => {
     const file = e.target.files[0];
@@ -25,22 +37,15 @@ export default function TranslationTrainer() {
         const translatedRows = await Promise.all(
           englishSentences.map(async (englishText) => {
             try {
-              const response = await fetch("https://api.openai.com/v1/chat/completions", {
+              const response = await fetch("/api/translate", {
                 method: "POST",
                 headers: {
                   "Content-Type": "application/json",
-                  Authorization: `Bearer ${apiKey}`,
                 },
-                body: JSON.stringify({
-                  model,
-                  messages: [
-                    { role: "system", content: "You are a translation assistant that translates English to Greek." },
-                    { role: "user", content: englishText },
-                  ],
-                }),
+                body: JSON.stringify({ text: englishText, model: selectedModel }),
               });
               const data = await response.json();
-              const greek = data.choices?.[0]?.message?.content?.trim() || "";
+              const greek = data.translation || "";
               return { English: englishText, Greek: greek };
             } catch (err) {
               console.error("Translation error:", err);
@@ -70,12 +75,52 @@ export default function TranslationTrainer() {
     link.click();
   };
 
+  const trainModel = async () => {
+    setTraining(true);
+    setTrainingStatus("Starting training...");
+    try {
+      const res = await fetch("/api/train", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(rows),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setTrainingStatus(`✅ Trained successfully as ${data.version} (${data.created})`);
+      } else {
+        throw new Error(data.error || "Unknown error");
+      }
+    } catch (err) {
+      console.error("Training error:", err);
+      setTrainingStatus("❌ Training failed. See console for details.");
+    } finally {
+      setTraining(false);
+    }
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100 px-4">
       <div className="w-full max-w-5xl bg-white p-8 shadow-xl rounded-2xl">
         <h1 className="text-3xl font-bold mb-6 text-center">
           English ➝ Greek Translation Trainer
         </h1>
+
+        <div className="mb-4 text-center">
+          <label className="block font-medium mb-1">Choose a model version:</label>
+          <select
+            className="border px-4 py-2 rounded w-full max-w-xs mx-auto"
+            value={selectedModel}
+            onChange={(e) => setSelectedModel(e.target.value)}
+          >
+            {models.map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.version} ({model.created})
+              </option>
+            ))}
+          </select>
+        </div>
 
         <div className="mb-6 text-center">
           <input
@@ -104,14 +149,25 @@ export default function TranslationTrainer() {
               ))}
             </div>
 
-            <div className="text-center mt-6">
+            <div className="text-center mt-6 space-x-4">
               <button
                 onClick={downloadEditedCSV}
                 className="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700"
               >
                 Download Edited CSV
               </button>
+              <button
+                onClick={trainModel}
+                disabled={training}
+                className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
+              >
+                {training ? "Training..." : "Train Your Translation Model"}
+              </button>
             </div>
+
+            {trainingStatus && (
+              <p className="text-center mt-4 text-sm text-gray-700">{trainingStatus}</p>
+            )}
           </>
         )}
       </div>
