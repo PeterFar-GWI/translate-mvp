@@ -16,7 +16,7 @@ export default function TranslationTrainer() {
       .then(data => {
         setModels(data.models || []);
         if (data.models && data.models.length > 0) {
-          setSelectedModel(data.models[0].id); // default to most recent
+          setSelectedModel(data.models[0].id);
         }
       })
       .catch(err => console.error("Failed to load models:", err));
@@ -88,7 +88,27 @@ export default function TranslationTrainer() {
       });
       const data = await res.json();
       if (data.success) {
-        setTrainingStatus(`✅ Trained successfully as ${data.version} (${data.created})`);
+        // Polling the training job
+        const pollStatus = async () => {
+          let status = "queued";
+          let model = null;
+          setTrainingStatus("Training in progress...");
+          while (!["succeeded", "failed"].includes(status)) {
+            const statusRes = await fetch(`/api/train-status?id=${data.job_id}`);
+            const statusData = await statusRes.json();
+            status = statusData.status;
+            model = statusData.model;
+            if (status === "succeeded") {
+              setTrainingStatus(`✅ Trained successfully as ${statusData.version} (${statusData.created})`);
+              break;
+            } else if (status === "failed") {
+              setTrainingStatus("❌ Training failed.");
+              break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 10000));
+          }
+        };
+        await pollStatus();
       } else {
         throw new Error(data.error || "Unknown error");
       }
